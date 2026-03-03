@@ -25,9 +25,9 @@ from transformers import AutoConfig, AutoModel, StoppingCriteriaList
 from transformers.generation.logits_process import LogitsProcessor, LogitsProcessorList
 
 from alpamayo_r1.action_space import ActionSpace
-from alpamayo_r1.models.base_model import ReasoningVLA
 from alpamayo_r1.config import AlpamayoR1Config
 from alpamayo_r1.diffusion.base import BaseDiffusion
+from alpamayo_r1.models.base_model import ReasoningVLA
 from alpamayo_r1.models.token_utils import (
     StopAfterEOS,
     extract_text_tokens,
@@ -66,7 +66,9 @@ class ExpertLogitsProcessor(LogitsProcessor):
             torch.FloatTensor: The modified scores tensor with trajectory tokens masked out (set to -inf).
         """
         # Directly assign -inf to the trajectory token positions in the scores tensor
-        scores[:, self.traj_token_offset : self.traj_token_offset + self.traj_vocab_size] = float('-inf')
+        scores[:, self.traj_token_offset : self.traj_token_offset + self.traj_vocab_size] = float(
+            "-inf"
+        )
         return scores
 
 
@@ -161,8 +163,7 @@ class AlpamayoR1(ReasoningVLA):
         }
         input_ids = self.fuse_traj_tokens(input_ids, traj_data_vlm)
         device = input_ids.device
-        use_cache = kwargs.get("use_cache", True)
-        cache_implementation = kwargs.get("cache_implementation", "static")
+
         # 1) run autoregressive generation for the VLM
         max_generation_length = kwargs.get(
             "max_generation_length", self.config.tokens_per_future_traj
@@ -195,8 +196,6 @@ class AlpamayoR1(ReasoningVLA):
             generation_config=generation_config,
             stopping_criteria=stopping_criteria,
             logits_processor=logits_processor,
-            use_cache=use_cache,
-            cache_implementation=cache_implementation,
             **tokenized_data,
         )
         vlm_outputs.rope_deltas = self.vlm.model.rope_deltas

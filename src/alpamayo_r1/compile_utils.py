@@ -494,7 +494,7 @@ def compile_qwen3vl_language_model(model, model_inputs, use_cache=False, cache_i
             inputs,
             dynamic_shapes=dynamic_shapes,
             strict=False,
-            allow_complex_guards_as_runtime_asserts=True,
+            prefer_deferred_runtime_asserts_over_guards=True,
         )
 
     trt_lm = torch_tensorrt.dynamo.compile(
