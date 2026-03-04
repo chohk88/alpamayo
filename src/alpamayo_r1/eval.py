@@ -296,15 +296,15 @@ def main():
                 torch.cuda.empty_cache()
             if args.print_every:
                 print(f"[{i}/{len(clip_ids)}] FAILED clip_id={clip_id}: {e}")
-        # finally:
-        #     if args.gc_every > 0 and (i % args.gc_every == 0):
-        #         gc.collect()
-        #     if (
-        #         torch.cuda.is_available()
-        #         and args.empty_cache_every > 0
-        #         and (i % args.empty_cache_every == 0)
-        #     ):
-        #         torch.cuda.empty_cache()
+        finally:
+            if args.gc_every > 0 and (i % args.gc_every == 0):
+                gc.collect()
+            if (
+                torch.cuda.is_available()
+                and args.empty_cache_every > 0
+                and (i % args.empty_cache_every == 0)
+            ):
+                torch.cuda.empty_cache()
 
 
     if per_clip:

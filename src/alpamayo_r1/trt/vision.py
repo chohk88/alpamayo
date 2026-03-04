@@ -227,6 +227,90 @@ class _PixelOnlyWrapper(nn.Module):
         return self.vfg(pixel_values, grid_thw=None)
 
 
+class _RepeatCollapseVisionWrapper(nn.Module):
+    """Collapse repeated visual inputs (from num_return_sequences) before TRT call.
+
+    Qwen3-VL generation repeats visual tensors per return sequence. For a single
+    sample with `num_return_sequences = N`, visual inputs become N identical
+    blocks. This wrapper:
+      1) detects block-wise repetition,
+      2) runs TRT vision once on the first block,
+      3) repeats the resulting embeddings N times.
+
+    It is only applied when the runtime input is an exact integer multiple of
+    compile-time base sizes and all blocks are identical.
+    """
+
+    def __init__(
+        self,
+        trt_model: nn.Module,
+        base_pixel_rows: int,
+        base_grid_rows: int,
+    ):
+        super().__init__()
+        self.trt_model = trt_model
+        self.base_pixel_rows = int(base_pixel_rows)
+        self.base_grid_rows = int(base_grid_rows)
+
+    @staticmethod
+    def _blocks_identical(x: torch.Tensor, repeat_factor: int) -> bool:
+        if repeat_factor <= 1:
+            return True
+        block = x.shape[0] // repeat_factor
+        first = x[:block]
+        for i in range(1, repeat_factor):
+            cur = x[i * block : (i + 1) * block]
+            if not torch.equal(first, cur):
+                return False
+        return True
+
+    @staticmethod
+    def _repeat_first_dim(x: torch.Tensor, repeat_factor: int) -> torch.Tensor:
+        if repeat_factor <= 1:
+            return x
+        return x.repeat((repeat_factor,) + (1,) * (x.dim() - 1))
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        grid_thw: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, list[torch.Tensor]]:
+        if grid_thw is None:
+            # Keep the compile-time signature: second arg is unused by TRT graph.
+            return self.trt_model(hidden_states, None)
+
+        total_pixel_rows = int(hidden_states.shape[0])
+        total_grid_rows = int(grid_thw.shape[0])
+
+        can_factor = (
+            self.base_pixel_rows > 0
+            and self.base_grid_rows > 0
+            and total_pixel_rows % self.base_pixel_rows == 0
+            and total_grid_rows % self.base_grid_rows == 0
+        )
+        if not can_factor:
+            return self.trt_model(hidden_states, None)
+
+        repeat_factor_pixel = total_pixel_rows // self.base_pixel_rows
+        repeat_factor_grid = total_grid_rows // self.base_grid_rows
+        if repeat_factor_pixel <= 1 or repeat_factor_pixel != repeat_factor_grid:
+            return self.trt_model(hidden_states, None)
+
+        repeat_factor = int(repeat_factor_pixel)
+
+        # Only collapse if we really have identical repeated blocks.
+        if not self._blocks_identical(grid_thw, repeat_factor):
+            return self.trt_model(hidden_states, None)
+        if not self._blocks_identical(hidden_states, repeat_factor):
+            return self.trt_model(hidden_states, None)
+
+        base_hidden = hidden_states[: self.base_pixel_rows]
+        trt_out = self.trt_model(base_hidden, None)
+        main_out = self._repeat_first_dim(trt_out[0], repeat_factor)
+        deepstack_out = [self._repeat_first_dim(x, repeat_factor) for x in trt_out[1]]
+        return main_out, deepstack_out
+
+
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
@@ -344,14 +428,20 @@ def compile_vision_model(
         # TRT compile may offload underlying vision weights to CPU.
         # Move back before running the PyTorch reference check.
         wrapped = wrapped.to(device=device, dtype=torch.bfloat16).eval()
+    wrapped_trt_model = _RepeatCollapseVisionWrapper(
+        trt_model=trt_model,
+        base_pixel_rows=int(pixel_values.shape[0]),
+        base_grid_rows=int(image_grid_thw.shape[0]),
+    ).eval()
+
     with torch.no_grad():
         torch_out = wrapped(*inputs)
-        trt_out   = trt_model(*inputs)
+        trt_out   = wrapped_trt_model(*inputs)
     main_diff = torch.abs(torch_out[0].float() - trt_out[0].float())
     logger.info(f"  max|Δ|  = {main_diff.max().item():.6f}")
     logger.info(f"  mean|Δ| = {main_diff.mean().item():.6f}")
 
-    return trt_model
+    return wrapped_trt_model
 
 
 def compile_and_replace_vision_model(
