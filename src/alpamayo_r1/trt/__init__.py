@@ -58,6 +58,13 @@ from alpamayo_r1.trt.vision import (
     compile_vision_model,
     save_vision_engine,
 )
+from alpamayo_r1.trt.plugin_lm import (
+    compile_all_engines,
+    load_engines_cache,
+    save_engines_cache,
+    run_trt_inference,
+    run_pytorch_inference,
+)
 
 __all__ = [
     # Vision
@@ -73,4 +80,10 @@ __all__ = [
     # Engine I/O
     "save_trt_engine",
     "TRTEngineRunner",
+    # Plugin LM
+    "compile_all_engines",
+    "load_engines_cache",
+    "save_engines_cache",
+    "run_trt_inference",
+    "run_pytorch_inference",
 ]
